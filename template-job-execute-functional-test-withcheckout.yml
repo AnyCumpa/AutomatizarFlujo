@@ -1,4 +1,4 @@
-# Author: @JohamRomucho,
+# Author: Captaciones
 # Project: DSO-API-TESTING
 
 ################
@@ -25,7 +25,7 @@ parameters:
   - name: tags
     displayName: 'Scenarios to run'
     type: string
-    default: '@regresion'
+    default: '@Token'
 
 ################
 # job
