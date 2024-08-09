@@ -40,7 +40,7 @@ stages:
       in(variables['Build.Reason'],'Manual')
     displayName: 'STAGE: Execute API Tests on ${{ parameters.environment }}'
     jobs:
-     - template: ../templates/jobs/template-job-execute-functional-test-withcheckout.yml
+     - template: template-job-execute-functional-test-withcheckout.yml
        parameters:
         environment: ${{ parameters.environment }}
         tags: ${{ parameters.tags }}
