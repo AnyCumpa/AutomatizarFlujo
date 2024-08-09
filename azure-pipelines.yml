@@ -1,0 +1,46 @@
+# Author: @Joham Romucho
+# Project: Api testing
+# Warnings:
+# 1. It is NOT allow declaring variables in this template
+# 2. It is OPTIONAL declare parameters
+# 3. Pass POOL as parameters do not declare in this template
+
+name: '$(Rev:rr)' #  ( Not change it)
+
+parameters:
+  - name: environment
+    displayName: 'Environment Name'
+    type: string
+    default: dev
+    values:
+      - dev
+      - staging
+      - uat
+      - default
+
+  - name: tags
+    displayName: 'Scenarios to run'
+    type: string
+    default: '@regresion'
+
+#########
+# It is not allow Trigger or Pull Request execution.
+########
+trigger: none
+pr: none
+
+variables:
+- group: ibkteam-devops-uat
+
+lockBehavior: sequential
+
+stages:
+  - stage:
+    condition: |
+      in(variables['Build.Reason'],'Manual')
+    displayName: 'STAGE: Execute API Tests on ${{ parameters.environment }}'
+    jobs:
+     - template: ../templates/jobs/template-job-execute-functional-test-withcheckout.yml
+       parameters:
+        environment: ${{ parameters.environment }}
+        tags: ${{ parameters.tags }}
