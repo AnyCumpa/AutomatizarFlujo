@@ -21,7 +21,7 @@ parameters:
   - name: tags
     displayName: 'Scenarios to run'
     type: string
-    default: '@regresion'
+    default: '@obtenerToken'
 
 #########
 # It is not allow Trigger or Pull Request execution.
