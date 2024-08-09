@@ -1,4 +1,4 @@
-# Author: @Joham Romucho
+# Author: Captaciones
 # Project: Api testing
 # Warnings:
 # 1. It is NOT allow declaring variables in this template
@@ -19,7 +19,7 @@ parameters:
       - default
 
   - name: tags
-    displayName: 'Scenarios to run'
+    displayName: 'Scenario to run'
     type: string
     default: '@obtenerToken'
 
