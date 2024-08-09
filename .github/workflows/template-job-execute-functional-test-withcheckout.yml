@@ -1,0 +1,191 @@
+# Author: @JohamRomucho,
+# Project: DSO-API-TESTING
+
+################
+# Main Parameters
+################
+
+parameters:
+  ### Required for the ibkFramework, do not delete!
+  - name: ibkTeamBuildSteps # the name of the parameter is buildSteps
+    type: stepList # data type is StepList
+    default: [ ] # default value of buildSteps
+
+  ### Optional, add all necessary parameters to the project
+  - name: environment
+    displayName: 'Environment Name'
+    type: string
+    default: dev
+    values:
+      - dev
+      - staging
+      - uat
+      - default
+
+  - name: tags
+    displayName: 'Scenarios to run'
+    type: string
+    default: '@regresion'
+
+################
+# job
+################
+jobs:
+  - job:
+    displayName: 'JOB: Execute API Tests on ${{ parameters.environment }}' # friendly name to display in the UI
+    continueOnError: false # 'true' if future jobs should run even if this job fails; defaults to 'false'
+    timeoutInMinutes: 30 # how long to run the job before automatically cancelling
+    #       cancelTimeoutInMinutes: number # how much time to give 'run always even if cancelled tasks' before killing them
+    workspace:
+      clean: all
+
+    pool: # agent pool
+      vmImage: 'ubuntu-20.04'
+
+    steps:
+      #Required for de ibkFramework, do not delete!
+      - ${{ each step in parameters.ibkTeamBuildSteps }}:
+          - ${{ each pair in step }}:
+              ${{ pair.key }}: ${{ pair.value }}
+
+      - script: |
+          echo VAR
+          echo JIRA_CLIENT_ID:$(JIRA_CLIENT_ID)
+          echo JIRA_CLIENT_SECRET:$(JIRA_CLIENT_SECRET)
+          echo PROJECT_KEY:$(PROJECT_KEY)
+          echo PROJECT_ID:$(PROJECT_ID)
+          echo REPOSITORY_NAME:$(REPOSITORY_NAME)
+          echo JIRA_USERNAME:$(JIRA_USERNAME)
+          echo JIRA_API_TOKEN:$(JIRA_API_TOKEN)
+          echo XRAY_HOSTNAME:$(XRAY_HOSTNAME)
+          echo JIRA_HOSTNAME:$(JIRA_HOSTNAME)
+          echo BD_USERNAME:$(BD_USERNAME)
+          echo BD_PASSWORD:$(BD_PASSWORD)
+          
+          echo environment:${{ parameters.environment }}
+
+        displayName: 'Show variables'
+
+      # reemplaza el environement del properties {environment} por el que le seleccionas en el pipeline
+      # obtiene si el reporte está configurado para subirse a la incidencia del Jira (Test Execution)
+      # mejora: parametrizar el número de incidencia al que se desea subir el reporte tal vez a la HU
+      - script: |
+          sed -i "s/report.customfields.environment=[a-zA-Z]*/report.customfields.environment=${{ parameters.environment }}/" $(Build.SourcesDirectory)/serenity.properties;
+          
+          publish_resut=$(cat $(Build.SourcesDirectory)/serenity.properties | grep "jira.integration.attachment" | cut -d '=' -f2);    
+          jira_integration=$(cat $(Build.SourcesDirectory)/serenity.properties | grep "jira.integration.source" | cut -d '=' -f2);
+          echo $jira_integration;
+          echo $publish_resut;
+          echo "##vso[task.setvariable variable=PUBLISH_RESULT]$publish_resut";
+          echo "##vso[task.setvariable variable=JIRA_INTEGRATION]$jira_integration";
+        displayName: 'Set enviroment to serenity report'
+        timeoutInMinutes: 1
+
+      ## example using Maven
+      - task: Maven@3
+        displayName: 'Run Test'
+        continueOnError: true
+        timeoutInMinutes: 20
+        inputs:
+          mavenPomFile: 'pom.xml'
+          goals: 'clean verify -Denvironment="${{ parameters.environment }}" "-Dcucumber.filter.tags=${{ parameters.tags }}"'
+          publishJUnitResults: false
+          testResultsFiles: '**/surefire-reports/TEST-*.xml'
+          mavenOptions: '-Xmx3072m'
+          javaHomeOption: 'JDKVersion'
+          jdkVersionOption: '1.11'
+          jdkArchitectureOption: 'x64'
+          mavenVersionOption: 'Default'
+          mavenSetM2Home: false
+          mavenAuthenticateFeed: false
+          effectivePomSkip: false
+          sonarQubeRunAnalysis: false
+
+      - task: ArchiveFiles@2
+        continueOnError: true
+        displayName: 'Zip Feature directory'
+        condition: eq(variables.JIRA_INTEGRATION, 'remote')
+        timeoutInMinutes: 5
+        inputs:
+          rootFolderOrFile: $(Build.SourcesDirectory)/src/test/resources/feature
+          includeRootFolder: False
+          archiveType: zip
+          archiveFile: $(Build.ArtifactStagingDirectory)/target/features-$(Build.BuildId).zip
+
+      - task: ArchiveFiles@2
+        continueOnError: true
+        displayName: 'Zip Serenity result'
+        timeoutInMinutes: 5
+        inputs:
+          rootFolderOrFile: $(Build.SourcesDirectory)/target/site/serenity
+          includeRootFolder: False
+          archiveType: zip
+          archiveFile: $(Build.ArtifactStagingDirectory)/target/serenityresult-$(Build.BuildId).zip
+
+      - publish: $(Build.ArtifactStagingDirectory)/target/serenityresult-$(Build.BuildId).zip
+        artifact: serenityResult
+        continueOnError: true
+        displayName: 'Publish artifact serenity report'
+        timeoutInMinutes: 5
+
+      - task: Bash@3
+        displayName: 'Get and set xray token'
+        condition: eq(variables.JIRA_INTEGRATION, 'remote')
+        continueOnError: false
+        inputs:
+          targetType: 'inline' # ;issecret=true
+          script: |
+            echo "Get and set xray token";
+            response=$(curl --location --request POST "$(XRAY_HOSTNAME)/api/v1/authenticate" --header 'Accept: application/json' --header 'Content-Type: application/json' --data-raw '{ "client_id": "$(JIRA_CLIENT_ID)", "client_secret": "$(JIRA_CLIENT_SECRET)" }');
+            token="${response:1:-1}";
+            echo "##vso[task.setvariable variable=XRAY_TOKEN;issecret=true]$token";
+
+      - task: Bash@3
+        displayName: 'Synchronizing test cases in Xray'
+        continueOnError: true
+        condition: eq(variables.JIRA_INTEGRATION, 'remote')
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "Synchronizing test cases in Xray";
+                        
+            echo $(XRAY_TOKEN);
+            zip_path="$(Build.ArtifactStagingDirectory)/target/features-$(Build.BuildId).zip";
+            echo $zip_path;
+            ls -l $(Build.ArtifactStagingDirectory)/target;
+            
+            response_sync=$(curl -v -i --location --request POST "$(XRAY_HOSTNAME)/api/v1/import/feature?projectKey=$(PROJECT_KEY)&projectId=$(PROJECT_ID)&source=$(REPOSITORY_NAME)" --header 'Content-Type: multipart/form-data' --header "Authorization: Bearer $(XRAY_TOKEN)" --form "file=@$zip_path");
+            echo $response_sync;
+
+
+      - task: Bash@3
+        displayName: 'Publish Serenity result'
+        continueOnError: true
+        condition: eq(variables.JIRA_INTEGRATION, 'remote')
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "Publish Serenity result"
+            
+            cucumber_report=$(cat $(Build.SourcesDirectory)/target/cucumber/cucumber.json);
+            echo $cucumber_report;
+            
+            response_publish=$(curl --location --request POST "$(XRAY_HOSTNAME)/api/v1/import/execution/cucumber" --header "Authorization: Bearer $(XRAY_TOKEN)" --header 'Content-Type: application/json' --data-raw "$cucumber_report");
+            echo $response_publish;
+            test_exec_key=$(echo $response_publish | awk -F ',' '{print $2}' | awk -F ':' '{print $2}')
+            echo "##vso[task.setvariable variable=TEST_EXEC_KEY]$test_exec_key";
+
+      - task: Bash@3
+        displayName: 'Attach serenity report to Test Execution $(TEST_EXEC_KEY)'
+        continueOnError: true
+        condition: and(eq(variables.JIRA_INTEGRATION, 'remote'), eq(variables.PUBLISH_RESULT, 'true'))
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "Attach serenity report to Test Execution $(TEST_EXEC_KEY)";
+                                    
+            zip_path="$(Build.ArtifactStagingDirectory)/target/serenityresult-$(Build.BuildId).zip";
+            echo $zip_path;
+            ls -l $(Build.ArtifactStagingDirectory)/target;
+            response_attach=$(curl -v -i --location  --request POST "$(JIRA_HOSTNAME)/rest/api/3/issue/$(TEST_EXEC_KEY)/attachments" --header 'X-Atlassian-Token: no-check' -u "$(JIRA_USERNAME):$(JIRA_API_TOKEN)" --form "file=@$zip_path");
+            echo $response_attach;
